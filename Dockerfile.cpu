@@ -1,0 +1,31 @@
+FROM python:3.12-slim AS base
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential cmake git curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Build llama.cpp (CPU only — Metal not available in Docker)
+RUN git clone --depth 1 https://github.com/ggml-org/llama.cpp /opt/llama.cpp \
+    && cd /opt/llama.cpp \
+    && cmake -B build -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build build --config Release -j$(nproc) \
+    && cp build/bin/llama-server /usr/local/bin/ \
+    && cp build/bin/llama-cli /usr/local/bin/ \
+    && rm -rf /opt/llama.cpp
+
+# Install Python deps
+COPY pyproject.toml /app/
+WORKDIR /app
+RUN pip install --no-cache-dir fastmcp mcp huggingface_hub
+
+COPY mcp_server.py /app/
+COPY start.sh /app/
+RUN chmod +x /app/start.sh
+
+ENV FASTCONTEXT_WORK_DIR=/workspace
+ENV FASTCONTEXT_SERVER=http://127.0.0.1:8080
+
+EXPOSE 8080
+
+ENTRYPOINT ["bash", "-c"]
+CMD ["if [ ! -f /models/*.gguf ]; then huggingface-cli download sdougbrown/FastContext-1.0-4B-RL-GGUF FastContext-1.0-4B-RL-Q4_K_M.gguf --local-dir /models; fi && /app/start.sh /workspace /models/FastContext-1.0-4B-RL-Q4_K_M.gguf"]

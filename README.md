@@ -74,85 +74,157 @@ The larger LLM only sees the distilled evidence — no noise, no irrelevant code
 - **Gap-fill**: ripgrep safety net catches what the model misses
 - **Q4 quantization**: runs on 6GB+ VRAM, ~67 tok/s generation
 
-## Requirements
+---
 
-- Python 3.10+
-- [llama.cpp](https://github.com/ggml-org/llama.cpp) with Vulkan backend (for GPU inference)
-- [ripgrep](https://github.com/BurntSushi/ripgrep) (`rg` command)
-- [FastMCP](https://github.com/jlowin/fastmcp) (`pip install fastmcp`)
-- ~6GB VRAM (or shared RAM for integrated GPUs)
+## Quick Start (Docker)
 
-## Installation
+The fastest way to get started. Docker handles all dependencies.
 
-### 1. Install dependencies
+### Linux with Vulkan GPU (AMD/Intel/NVIDIA)
 
 ```bash
-pip install fastmcp mcp
+git clone https://github.com/LyuboslavLyubenov/fastcontext-hybrid-mcp
+cd fastcontext-hybrid-mcp
+
+# Start with your project directory
+WORK_DIR=/path/to/your/project docker compose up fastcontext-vulkan
 ```
 
-### 2. Download the model
+The model downloads automatically on first run (~2.4GB).
+
+### macOS or CPU-only Linux
 
 ```bash
-# Q4_K_M quantization (2.4GB, recommended)
-huggingface-cli download sdougbrown/FastContext-1.0-4B-RL-GGUF \
-  FastContext-1.0-4B-RL-Q4_K_M.gguf \
-  --local-dir ./models
+git clone https://github.com/LyuboslavLyubenov/fastcontext-hybrid-mcp
+cd fastcontext-hybrid-mcp
 
-# Or Q8_0 for higher quality (4.5GB)
-huggingface-cli download mitkox/FastContext-1.0-4B-RL-Q8_0-GGUF \
-  FastContext-1.0-4B-RL-Q8_0.gguf \
-  --local-dir ./models
+WORK_DIR=/path/to/your/project docker compose up fastcontext-cpu
 ```
 
-### 3. Build llama.cpp with Vulkan
+### Docker run (manual)
 
 ```bash
-git clone https://github.com/ggml-org/llama.cpp.git
-cd llama.cpp
-cmake -B build -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release
-cmake --build build --config Release -j$(nproc)
+# Build
+docker build -f Dockerfile.vulkan -t fastcontext-mcp .
+
+# Run
+docker run -d \
+  -v /path/to/project:/workspace \
+  -v ./models:/models \
+  -p 8080:8080 \
+  --device /dev/dri:/dev/dri \
+  fastcontext-mcp
 ```
 
-### 4. Install ripgrep
+---
+
+## Quick Start (No Docker)
+
+For native performance or if you prefer not to use containers.
+
+### One-command setup
+
+```bash
+git clone https://github.com/LyuboslavLyubenov/fastcontext-hybrid-mcp
+cd fastcontext-hybrid-mcp
+chmod +x setup.sh start.sh
+./setup.sh
+```
+
+This installs everything: Python deps, llama.cpp (Vulkan/Metal), ripgrep, and downloads the model.
+
+Then start:
+```bash
+./start.sh /path/to/your/project
+```
+
+### Manual setup (Linux with Vulkan)
+
+#### 1. Install system dependencies
 
 ```bash
 # Fedora
-sudo dnf install ripgrep
+sudo dnf install cmake gcc-c++ glslc spirv-headers-devel spirv-tools-devel \
+    vulkan-headers vulkan-loader-devel ripgrep
 
 # Ubuntu/Debian
-sudo apt install ripgrep
-
-# macOS
-brew install ripgrep
+sudo apt install cmake build-essential glslc spirv-headers spirv-tools \
+    libvulkan-dev ripgrep
 ```
 
-## Usage
-
-### Start the inference server
+#### 2. Install Python dependencies
 
 ```bash
-# 32K context, 1 parallel slot, Vulkan GPU offload
-./llama.cpp/build/bin/llama-server \
-  -m models/FastContext-1.0-4B-RL-Q4_K_M.gguf \
-  --ctx-size 32768 \
-  --parallel 1 \
-  -ngl 99 \
-  --host 127.0.0.1 \
-  --port 8080 \
-  --reasoning off
+pip install fastmcp mcp huggingface_hub
 ```
 
-### Start the MCP server
+#### 3. Build llama.cpp with Vulkan
 
 ```bash
-# Set your project directory
-export FASTCONTEXT_WORK_DIR=/path/to/your/project
-
-# Run the MCP server
-python3 mcp_server.py
+git clone --depth 1 https://github.com/ggml-org/llama.cpp
+cd llama.cpp
+cmake -B build -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release -j$(nproc)
+sudo cp build/bin/llama-server /usr/local/bin/
+cd ..
 ```
 
-### Configure in Hermes Agent
+#### 4. Download the model
+
+```bash
+huggingface-cli download sdougbrown/FastContext-1.0-4B-RL-GGUF \
+    FastContext-1.0-4B-RL-Q4_K_M.gguf --local-dir ./models
+```
+
+#### 5. Start
+
+```bash
+# Start inference server (32K context, 1 slot, Vulkan GPU)
+llama-server \
+    -m models/FastContext-1.0-4B-RL-Q4_K_M.gguf \
+    --ctx-size 32768 \
+    --parallel 1 \
+    -ngl 99 \
+    --host 127.0.0.1 \
+    --port 8080 \
+    --reasoning off &
+
+# Start MCP server
+FASTCONTEXT_WORK_DIR=/path/to/project python3 mcp_server.py
+```
+
+### Manual setup (macOS with Metal)
+
+#### 1. Install dependencies
+
+```bash
+brew install cmake git ripgrep python3
+pip install fastmcp mcp huggingface_hub
+```
+
+#### 2. Build llama.cpp with Metal
+
+```bash
+git clone --depth 1 https://github.com/ggml-org/llama.cpp
+cd llama.cpp
+cmake -B build -DGGML_METAL=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release -j$(sysctl -n hw.ncpu)
+sudo cp build/bin/llama-server /usr/local/bin/
+cd ..
+```
+
+#### 3. Download model and start
+
+```bash
+huggingface-cli download sdougbrown/FastContext-1.0-4B-RL-GGUF \
+    FastContext-1.0-4B-RL-Q4_K_M.gguf --local-dir ./models
+
+./start.sh /path/to/your/project
+```
+
+---
+
+## Configure in Hermes Agent
 
 Add to `~/.hermes/config.yaml`:
 
@@ -167,7 +239,9 @@ mcp_servers:
     timeout: 120
 ```
 
-Restart Hermes Agent. The tools will appear as `mcp_fastcontext_*`.
+Restart Hermes Agent. Tools appear as `mcp_fastcontext_*`.
+
+---
 
 ## Tools
 
@@ -210,6 +284,8 @@ List files matching a glob pattern.
 
 Check if the inference server is running.
 
+---
+
 ## Environment Variables
 
 | Variable | Default | Description |
@@ -218,6 +294,14 @@ Check if the inference server is running.
 | `FASTCONTEXT_SERVER` | `http://127.0.0.1:8080` | llama-server URL |
 | `FASTCONTEXT_MODEL` | `models/FastContext-1.0-4B-RL-Q4_K_M.gguf` | Model path |
 | `FASTCONTEXT_LLAMA_CPP` | auto-detected | llama-server binary path |
+
+## Hardware Requirements
+
+| Backend | Min VRAM/RAM | GPU | Notes |
+|---------|-------------|-----|-------|
+| Vulkan | 6 GB | AMD/Intel/NVIDIA | Linux, Mesa or proprietary drivers |
+| Metal | 8 GB unified | Apple Silicon | macOS only |
+| CPU | 8 GB RAM | None | Slowest, works everywhere |
 
 ## Performance
 
@@ -229,21 +313,6 @@ Check if the inference server is running.
 | Generation | ~67 tokens/sec |
 | Context per question | ~5K tokens |
 | Time per question | ~20-40 seconds |
-
-## Example
-
-```python
-from mcp_server import search_context
-import json
-
-result = search_context(
-    question="what is the difference between survey and engagement?",
-    work_dir="/path/to/your/project"
-)
-
-data = json.loads(result)
-print(data["snippets"])  # ~5K tokens of relevant code
-```
 
 ## License
 

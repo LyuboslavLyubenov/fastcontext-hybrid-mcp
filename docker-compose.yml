@@ -1,0 +1,42 @@
+# FastContext Hybrid MCP Server
+#
+# Usage:
+#   Vulkan (Linux GPU):  docker compose up fastcontext-vulkan
+#   CPU (macOS/Linux):   docker compose up fastcontext-cpu
+#
+# Or build manually:
+#   docker build -f Dockerfile.vulkan -t fastcontext-mcp .
+#   docker run -v /path/to/project:/workspace -v ./models:/models fastcontext-mcp
+
+services:
+  # Linux with Vulkan GPU (AMD/Intel/NVIDIA via Mesa)
+  fastcontext-vulkan:
+    build:
+      context: .
+      dockerfile: Dockerfile.vulkan
+    volumes:
+      - ${WORK_DIR:-.}:/workspace
+      - ${MODEL_DIR:-./models}:/models
+    ports:
+      - "${PORT:-8080}:8080"
+    devices:
+      - /dev/dri:/dev/dri  # Vulkan GPU access
+    environment:
+      - FASTCONTEXT_WORK_DIR=/workspace
+      - FASTCONTEXT_SERVER=http://127.0.0.1:8080
+    restart: unless-stopped
+
+  # macOS / Linux CPU-only
+  fastcontext-cpu:
+    build:
+      context: .
+      dockerfile: Dockerfile.cpu
+    volumes:
+      - ${WORK_DIR:-.}:/workspace
+      - ${MODEL_DIR:-./models}:/models
+    ports:
+      - "${PORT:-8080}:8080"
+    environment:
+      - FASTCONTEXT_WORK_DIR=/workspace
+      - FASTCONTEXT_SERVER=http://127.0.0.1:8080
+    restart: unless-stopped
