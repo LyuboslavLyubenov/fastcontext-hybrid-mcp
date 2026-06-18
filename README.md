@@ -80,6 +80,9 @@ The larger LLM only sees the distilled evidence — no noise, no irrelevant code
 
 The fastest way to get started. Docker handles all dependencies.
 
+> **Note for macOS users:** Docker on macOS runs in a Linux VM — it cannot access Metal GPU.
+> For Metal GPU acceleration on Apple Silicon, use the **native setup** below.
+
 ### Linux with Vulkan GPU (AMD/Intel/NVIDIA)
 
 ```bash
@@ -92,7 +95,7 @@ WORK_DIR=/path/to/your/project docker compose up fastcontext-vulkan
 
 The model downloads automatically on first run (~2.4GB).
 
-### macOS or CPU-only Linux
+### CPU-only (macOS Docker or Linux without GPU)
 
 ```bash
 git clone https://github.com/LyuboslavLyubenov/fastcontext-hybrid-mcp
@@ -118,23 +121,37 @@ docker run -d \
 
 ---
 
-## Quick Start (No Docker)
+## Quick Start (No Docker — Recommended for macOS)
 
-For native performance or if you prefer not to use containers.
+For native performance with Metal GPU on Apple Silicon, or Vulkan on Linux.
 
-### One-command setup
+### macOS with Metal GPU (Apple Silicon M1/M2/M3/M4)
+
+```bash
+git clone https://github.com/LyuboslavLyubenov/fastcontext-hybrid-mcp
+cd fastcontext-hybrid-mcp
+chmod +x setup-mac.sh start.sh
+
+# One-command setup (installs everything, builds llama.cpp with Metal)
+./setup-mac.sh
+
+# Start with your project
+./start.sh /path/to/your/project
+```
+
+This uses Metal GPU for ~67 tok/s generation. No Docker needed.
+
+### Linux with Vulkan GPU
 
 ```bash
 git clone https://github.com/LyuboslavLyubenov/fastcontext-hybrid-mcp
 cd fastcontext-hybrid-mcp
 chmod +x setup.sh start.sh
+
+# One-command setup
 ./setup.sh
-```
 
-This installs everything: Python deps, llama.cpp (Vulkan/Metal), ripgrep, and downloads the model.
-
-Then start:
-```bash
+# Start
 ./start.sh /path/to/your/project
 ```
 
@@ -297,11 +314,11 @@ Check if the inference server is running.
 
 ## Hardware Requirements
 
-| Backend | Min VRAM/RAM | GPU | Notes |
-|---------|-------------|-----|-------|
-| Vulkan | 6 GB | AMD/Intel/NVIDIA | Linux, Mesa or proprietary drivers |
-| Metal | 8 GB unified | Apple Silicon | macOS only |
-| CPU | 8 GB RAM | None | Slowest, works everywhere |
+| Backend | Min RAM | GPU | Platform | Notes |
+|---------|---------|-----|----------|-------|
+| **Metal** | 8 GB unified | Apple Silicon M1+ | macOS native | **Best for macOS** — requires native install, not Docker |
+| **Vulkan** | 6 GB | AMD/Intel/NVIDIA | Linux | Mesa or proprietary drivers |
+| **CPU** | 8 GB RAM | None | Any | Works in Docker on any platform, ~10x slower |
 
 ## Performance
 
