@@ -1,0 +1,14 @@
+[project]
+name = "fastcontext-hybrid-mcp"
+version = "0.1.0"
+description = "MCP server for codebase context gathering using FastContext 4B model + fuzzy matching"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = [
+    "fastmcp>=1.0.0",
+    "mcp>=1.0.0",
+]
+
+[project.scripts]
+fastcontext-mcp = "mcp_server:main"
