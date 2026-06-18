@@ -60,7 +60,7 @@ $LLAMA_SERVER \
     $GPU_ARGS \
     --host 127.0.0.1 \
     --port "$PORT" \
-    --reasoning off &
+    &
 LLAMA_PID=$!
 
 # Wait for readiness
@@ -73,13 +73,25 @@ for i in $(seq 1 30); do
     sleep 1
 done
 
-# Start MCP server
+# Start MCP server (SSE in Docker, stdio otherwise)
 export FASTCONTEXT_WORK_DIR="$WORK_DIR"
 export FASTCONTEXT_SERVER="http://127.0.0.1:$PORT"
 
-echo "Starting MCP server..."
-python3 mcp_server.py &
-MCP_PID=$!
+if [ -n "$FASTCONTEXT_TRANSPORT" ]; then
+    echo "Starting MCP server with transport=$FASTCONTEXT_TRANSPORT..."
+    python3 mcp_server.py &
+    MCP_PID=$!
+elif [ -f /.dockerenv ] || [ -n "$DOCKER_CONTAINER" ]; then
+    echo "Docker detected — starting MCP server with SSE transport on port 8090..."
+    export FASTCONTEXT_TRANSPORT="sse"
+    export FASTCONTEXT_MCP_PORT="8090"
+    python3 mcp_server.py &
+    MCP_PID=$!
+else
+    echo "Starting MCP server (stdio)..."
+    python3 mcp_server.py &
+    MCP_PID=$!
+fi
 
 # Cleanup
 trap "echo 'Shutting down...'; kill $LLAMA_PID $MCP_PID 2>/dev/null; exit 0" INT TERM

@@ -384,7 +384,13 @@ def health_check() -> str:
 # ─── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    mcp.run()
+    transport = os.environ.get("FASTCONTEXT_TRANSPORT", "stdio")
+    if transport in ("sse", "http", "streamable-http"):
+        host = os.environ.get("FASTCONTEXT_MCP_HOST", "0.0.0.0")
+        port = int(os.environ.get("FASTCONTEXT_MCP_PORT", "8090"))
+        mcp.run(transport=transport, host=host, port=port)
+    else:
+        mcp.run(transport="stdio")
 
 if __name__ == "__main__":
     main()

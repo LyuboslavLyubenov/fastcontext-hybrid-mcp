@@ -1,7 +1,7 @@
 FROM python:3.12-slim AS base
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential cmake git curl ca-certificates \
+    build-essential cmake git curl ca-certificates ripgrep \
     && rm -rf /var/lib/apt/lists/*
 
 # Build llama.cpp (CPU only — Metal not available in Docker)
@@ -28,4 +28,4 @@ ENV FASTCONTEXT_SERVER=http://127.0.0.1:8080
 EXPOSE 8080
 
 ENTRYPOINT ["bash", "-c"]
-CMD ["if [ ! -f /models/*.gguf ]; then huggingface-cli download sdougbrown/FastContext-1.0-4B-RL-GGUF FastContext-1.0-4B-RL-Q4_K_M.gguf --local-dir /models; fi && /app/start.sh /workspace /models/FastContext-1.0-4B-RL-Q4_K_M.gguf"]
+CMD ["ls /models/*.gguf >/dev/null 2>&1 || huggingface-cli download sdougbrown/FastContext-1.0-4B-RL-GGUF FastContext-1.0-4B-RL-Q4_K_M.gguf --local-dir /models && /app/start.sh /workspace /models/FastContext-1.0-4B-RL-Q4_K_M.gguf"]

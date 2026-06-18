@@ -76,70 +76,30 @@ The larger LLM only sees the distilled evidence — no noise, no irrelevant code
 
 ---
 
-## Quick Start (Docker)
+## Quick Start (macOS — Recommended)
 
-The fastest way to get started. Docker handles all dependencies.
-
-> **Note for macOS users:** Docker on macOS runs in a Linux VM — it cannot access Metal GPU.
-> For Metal GPU acceleration on Apple Silicon, use the **native setup** below.
-
-### Linux with Vulkan GPU (AMD/Intel/NVIDIA)
-
-```bash
-git clone https://github.com/LyuboslavLyubenov/fastcontext-hybrid-mcp
-cd fastcontext-hybrid-mcp
-
-# Start with your project directory
-WORK_DIR=/path/to/your/project docker compose up fastcontext-vulkan
-```
-
-The model downloads automatically on first run (~2.4GB).
-
-### CPU-only (macOS Docker or Linux without GPU)
-
-```bash
-git clone https://github.com/LyuboslavLyubenov/fastcontext-hybrid-mcp
-cd fastcontext-hybrid-mcp
-
-WORK_DIR=/path/to/your/project docker compose up fastcontext-cpu
-```
-
-### Docker run (manual)
-
-```bash
-# Build
-docker build -f Dockerfile.vulkan -t fastcontext-mcp .
-
-# Run
-docker run -d \
-  -v /path/to/project:/workspace \
-  -v ./models:/models \
-  -p 8080:8080 \
-  --device /dev/dri:/dev/dri \
-  fastcontext-mcp
-```
-
----
-
-## Quick Start (No Docker — Recommended for macOS)
-
-For native performance with Metal GPU on Apple Silicon, or Vulkan on Linux.
-
-### macOS with Metal GPU (Apple Silicon M1/M2/M3/M4)
+For Metal GPU acceleration on Apple Silicon (M1–M4). No Docker needed.
 
 ```bash
 git clone https://github.com/LyuboslavLyubenov/fastcontext-hybrid-mcp
 cd fastcontext-hybrid-mcp
 chmod +x setup-mac.sh start.sh
 
-# One-command setup (installs everything, builds llama.cpp with Metal)
+# One-command setup (installs dependencies, builds llama.cpp with Metal, downloads model)
 ./setup-mac.sh
 
 # Start with your project
 ./start.sh /path/to/your/project
 ```
 
-This uses Metal GPU for ~67 tok/s generation. No Docker needed.
+This uses Metal GPU for ~67 tok/s generation. No Docker required.
+
+> **Prerequisites**: macOS on Apple Silicon, Homebrew.
+> The setup script auto-detects everything and installs what's missing.
+
+---
+
+## Quick Start (Linux)
 
 ### Linux with Vulkan GPU
 
@@ -148,102 +108,48 @@ git clone https://github.com/LyuboslavLyubenov/fastcontext-hybrid-mcp
 cd fastcontext-hybrid-mcp
 chmod +x setup.sh start.sh
 
-# One-command setup
 ./setup.sh
 
-# Start
+# Start with your project
 ./start.sh /path/to/your/project
 ```
 
-### Manual setup (Linux with Vulkan)
-
-#### 1. Install system dependencies
+### Linux CPU-only (or Docker)
 
 ```bash
-# Fedora
-sudo dnf install cmake gcc-c++ glslc spirv-headers-devel spirv-tools-devel \
-    vulkan-headers vulkan-loader-devel ripgrep
-
-# Ubuntu/Debian
-sudo apt install cmake build-essential glslc spirv-headers spirv-tools \
-    libvulkan-dev ripgrep
-```
-
-#### 2. Install Python dependencies
-
-```bash
-pip install fastmcp mcp huggingface_hub
-```
-
-#### 3. Build llama.cpp with Vulkan
-
-```bash
-git clone --depth 1 https://github.com/ggml-org/llama.cpp
-cd llama.cpp
-cmake -B build -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release
-cmake --build build --config Release -j$(nproc)
-sudo cp build/bin/llama-server /usr/local/bin/
-cd ..
-```
-
-#### 4. Download the model
-
-```bash
-huggingface-cli download sdougbrown/FastContext-1.0-4B-RL-GGUF \
-    FastContext-1.0-4B-RL-Q4_K_M.gguf --local-dir ./models
-```
-
-#### 5. Start
-
-```bash
-# Start inference server (32K context, 1 slot, Vulkan GPU)
-llama-server \
-    -m models/FastContext-1.0-4B-RL-Q4_K_M.gguf \
-    --ctx-size 32768 \
-    --parallel 1 \
-    -ngl 99 \
-    --host 127.0.0.1 \
-    --port 8080 \
-    --reasoning off &
-
-# Start MCP server
-FASTCONTEXT_WORK_DIR=/path/to/project python3 mcp_server.py
-```
-
-### Manual setup (macOS with Metal)
-
-#### 1. Install dependencies
-
-```bash
-brew install cmake git ripgrep python3
-pip install fastmcp mcp huggingface_hub
-```
-
-#### 2. Build llama.cpp with Metal
-
-```bash
-git clone --depth 1 https://github.com/ggml-org/llama.cpp
-cd llama.cpp
-cmake -B build -DGGML_METAL=ON -DCMAKE_BUILD_TYPE=Release
-cmake --build build --config Release -j$(sysctl -n hw.ncpu)
-sudo cp build/bin/llama-server /usr/local/bin/
-cd ..
-```
-
-#### 3. Download model and start
-
-```bash
-huggingface-cli download sdougbrown/FastContext-1.0-4B-RL-GGUF \
-    FastContext-1.0-4B-RL-Q4_K_M.gguf --local-dir ./models
-
-./start.sh /path/to/your/project
+WORK_DIR=/path/to/your/project docker compose up fastcontext-cpu
 ```
 
 ---
 
-## Configure in Hermes Agent
+## Quick Start (Docker)
 
-Add to `~/.hermes/config.yaml`:
+Docker handles all dependencies but runs CPU-only on macOS (no GPU passthrough).
+
+### macOS / Linux CPU
+
+```bash
+git clone https://github.com/LyuboslavLyubenov/fastcontext-hybrid-mcp
+cd fastcontext-hybrid-mcp
+
+WORK_DIR=/path/to/your/project docker compose up fastcontext-cpu
+```
+
+The MCP server exposes SSE on port 8090 for MCP clients to connect.
+
+### Linux with Vulkan GPU
+
+```bash
+WORK_DIR=/path/to/your/project docker compose up fastcontext-vulkan
+```
+
+---
+
+## Using with MCP Clients
+
+### Stdio (native macOS/Linux)
+
+Add to `~/.config/opencode/opencode.json` or `~/.hermes/config.yaml`:
 
 ```yaml
 mcp_servers:
@@ -256,7 +162,19 @@ mcp_servers:
     timeout: 120
 ```
 
-Restart Hermes Agent. Tools appear as `mcp_fastcontext_*`.
+Make sure `llama-server` is running first (via `./start.sh` or manually).
+
+### SSE (Docker)
+
+When running in Docker, the MCP server listens on port 8090 with SSE transport.
+Configure your MCP client to connect via SSE:
+
+```yaml
+mcp_servers:
+  fastcontext:
+    transport: "sse"
+    url: "http://localhost:8090/mcp"
+```
 
 ---
 
@@ -311,6 +229,9 @@ Check if the inference server is running.
 | `FASTCONTEXT_SERVER` | `http://127.0.0.1:8080` | llama-server URL |
 | `FASTCONTEXT_MODEL` | `models/FastContext-1.0-4B-RL-Q4_K_M.gguf` | Model path |
 | `FASTCONTEXT_LLAMA_CPP` | auto-detected | llama-server binary path |
+| `FASTCONTEXT_TRANSPORT` | `stdio` | MCP transport: `stdio`, `sse`, `http`, `streamable-http` |
+| `FASTCONTEXT_MCP_HOST` | `0.0.0.0` | MCP server bind host (for SSE/HTTP) |
+| `FASTCONTEXT_MCP_PORT` | `8090` | MCP server port (for SSE/HTTP) |
 
 ## Hardware Requirements
 

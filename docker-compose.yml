@@ -36,7 +36,11 @@ services:
       - ${MODEL_DIR:-./models}:/models
     ports:
       - "${PORT:-8080}:8080"
+      - "${MCP_PORT:-8090}:8090"
     environment:
       - FASTCONTEXT_WORK_DIR=/workspace
       - FASTCONTEXT_SERVER=http://127.0.0.1:8080
+      - FASTCONTEXT_TRANSPORT=sse
+      - FASTCONTEXT_MCP_HOST=0.0.0.0
+      - FASTCONTEXT_MCP_PORT=8090
     restart: unless-stopped
