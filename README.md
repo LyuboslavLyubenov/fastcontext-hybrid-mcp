@@ -252,6 +252,16 @@ Check if the inference server is running.
 | Context per question | ~5K tokens |
 | Time per question | ~20-40 seconds |
 
+## Hosting
+
+For team/production deployment, see **[HOSTING.md](HOSTING.md)**:
+- VPS with GPU (Lambda Labs, Vast.ai, RunPod, Hetzner)
+- Systemd services for auto-start
+- Reverse proxy (nginx, Caddy) for network access
+- Docker with persistent model volumes
+- Multi-project setup
+- Cost estimates
+
 ## License
 
 MIT
