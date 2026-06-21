@@ -45,7 +45,7 @@ def fuzzy_match(concept, text, max_distance=2):
                     return True
     return False
 
-def fuzzy_snippet(filepath, concepts, context=2):
+def fuzzy_snippet(filepath, concepts, context=1):
     try:
         with open(filepath) as f:
             all_lines = f.readlines()
@@ -59,13 +59,15 @@ def fuzzy_snippet(filepath, concepts, context=2):
     if not match_indices:
         return ""
     sorted_indices = sorted(match_indices)
+    first_block = [sorted_indices[0]]
+    for i in range(1, len(sorted_indices)):
+        if sorted_indices[i] == sorted_indices[i-1] + 1:
+            first_block.append(sorted_indices[i])
+        else:
+            break
     out = []
-    prev = -2
-    for idx in sorted_indices:
-        if prev >= 0 and idx > prev + 1:
-            out.append("...")
-        out.append(str(idx + 1) + "|" + all_lines[idx].rstrip()[:200])
-        prev = idx
+    for idx in first_block:
+        out.append(str(idx + 1) + "|" + all_lines[idx].rstrip())
     return "\n".join(out)
 
 # ─── Path Resolution ───────────────────────────────────────────────────────────
@@ -74,12 +76,18 @@ def resolve_path(p, work_dir):
     if not p: return p
     if os.path.exists(p): return p
     
-    # Model training uses /basename as alias for work_dir
     ws_name = os.path.basename(work_dir)
-    if p.startswith("/" + ws_name):
-        # Replace leading /ws_name with the real work_dir
-        p = work_dir + p[len(ws_name) + 1:]
-        if os.path.exists(p): return p
+    
+    # Normalized comparison: case-insensitive, ignoring hyphens/underscores
+    ws_norm = ws_name.lower().replace("-", "").replace("_", "")
+    
+    # Model training uses /<projectname>/... as alias for work_dir
+    if p.startswith("/"):
+        first = p.split("/")[1] if "/" in p else None
+        if first and first.lower().replace("-", "").replace("_", "") == ws_norm:
+            suffix = "" if len(p) <= len(first) + 1 else p[len(first) + 1:]
+            p = work_dir + suffix
+            if os.path.exists(p): return p
     
     # Try prepending work_dir for relative paths
     candidate = os.path.join(work_dir, p.lstrip("/"))
@@ -101,18 +109,18 @@ def execute_tool(name, args_str, work_dir):
             with open(p) as f: lines = f.readlines()
             off = max(args.get("offset", 1) or 1, 1)
             end = min(off + 99, len(lines))
-            out = [str(i+1) + "|" + lines[i][:300].rstrip() for i in range(off-1, end)]
+            out = [str(i+1) + "|" + lines[i].rstrip() for i in range(off-1, end)]
             return "```" + p + ":" + str(off) + "-" + str(end) + "\n" + "\n".join(out) + "\n```"
         elif name == "Glob":
             d = resolve_path(args.get("directory", work_dir), work_dir)
             r = subprocess.run(["rg", "--files", d, "--glob", args["pattern"]], capture_output=True, text=True, timeout=10, cwd=work_dir)
-            return r.stdout.strip()[:2000] if r.returncode == 0 else r.stderr.strip()[:500]
+            return r.stdout.strip() if r.returncode == 0 else r.stderr.strip()
         elif name == "Grep":
             cmd = ["rg", args["pattern"], resolve_path(args.get("path", work_dir), work_dir)]
             if args.get("glob"): cmd += ["--glob", args["glob"]]
             cmd += ["--files-with-matches", "--heading", "--color", "never"]
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=10, cwd=work_dir)
-            return r.stdout.strip()[:2000] if r.returncode == 0 else r.stderr.strip()[:500]
+            return r.stdout.strip() if r.returncode == 0 else r.stderr.strip()
         return "Unknown tool"
     except Exception as e:
         return "Tool error: " + str(e)
@@ -214,77 +222,151 @@ def extract_snippets(read_files, concepts):
     all_content = ""
     total_chars = 0
     for fpath, info in read_files.items():
-        snippet = fuzzy_snippet(fpath, concepts, context=2)
+        snippet = fuzzy_snippet(fpath, concepts, context=1)
         if not snippet:
             try:
                 with open(fpath) as f:
                     lines = f.readlines()
                 s = max(0, info["start"] - 1)
                 e = min(len(lines), info["end"])
-                snippet = "\n".join(str(s+i+1) + "|" + lines[s+i].rstrip()[:200] for i in range(min(e-s, 50)))
+                rows = [str(s+i+1) + "|" + lines[s+i].rstrip() for i in range(min(e-s, 20))]
+                snippet = "\n".join(rows)
             except:
                 snippet = ""
         total_chars += len(snippet)
         all_content += snippet + "\n"
     return all_content, total_chars
 
+def _pick_best_file(candidates, existing_files, concept=""):
+    """Pick best file: name+doc > name+code > doc > code > data."""
+    variants = list(_concept_variants(concept)) if concept else [concept]
+    def score(f):
+        fn = os.path.basename(f).lower().replace("-", " ").replace("_", " ")
+        name_ok = any(v and v in fn for v in variants)
+        is_doc = f.endswith((".md", ".txt", ".mjs"))
+        is_code = f.endswith((".py", ".ts", ".js", ".tsx", ".jsx"))
+        if name_ok and is_doc: return 0
+        if name_ok: return 1
+        if is_doc: return 2
+        if is_code: return 3
+        return 4
+    valid = [(score(f), f) for f in candidates if f and os.path.isfile(f) and f not in existing_files]
+    if not valid:
+        return None
+    valid.sort(key=lambda x: (x[0], x[1]))
+    return valid[0][1]
+
+GAP_STOPWORDS = {"process", "data", "file", "code", "system", "user", "manage",
+                  "create", "update", "delete", "get", "set", "find", "run", "work",
+                  "base", "info", "text", "type", "list", "show", "test", "need",
+                  "automatically", "actually"}
+
 def gap_fill(missing_concepts, work_dir, existing_files):
-    """Search for missing concepts using fuzzy matching."""
+    """Search for missing concepts. Skips generic words. Extracts via fuzzy_snippet."""
     gap_content = ""
     gap_chars = 0
     for concept in missing_concepts[:5]:
+        if len(concept) < 5 or concept in GAP_STOPWORDS:
+            continue
         try:
-            r = subprocess.run(["rg", "--files-with-matches", concept, work_dir, "--heading", "--color", "never"],
-                             capture_output=True, text=True, timeout=10)
-            if r.returncode == 0:
-                for f in r.stdout.strip().split("\n"):
-                    f = f.strip()
-                    if f and os.path.isfile(f) and f not in existing_files:
-                        snippet = fuzzy_snippet(f, [concept], context=2)
-                        if snippet:
-                            gap_chars += len(snippet)
-                            gap_content += snippet + "\n"
-                            break
+            all_candidates = set()
+            for variant in _concept_variants(concept):
+                r = subprocess.run(["rg", "-l", "-m", "10", "-i", variant, work_dir],
+                                 capture_output=True, text=True, timeout=10)
+                if r.returncode == 0:
+                    all_candidates.update(c.strip() for c in r.stdout.strip().split("\n") if c.strip())
+            candidates = list(all_candidates)
+            pick = _pick_best_file(candidates, existing_files, concept)
+            if not pick:
+                continue
+            existing_files[pick] = True
+            snippet = fuzzy_snippet(pick, [concept], context=1)
+            if snippet:
+                gap_chars += len(snippet)
+                gap_content += "# " + pick + "\n" + snippet + "\n"
         except:
             pass
     return gap_content, gap_chars
 
-def decompose(question):
-    """Break question into sub-questions."""
+def extract_keywords(question):
+    """Extract meaningful keywords from a question."""
     stopwords = {'the','what','where','when','how','does','this','that','with','from','have','been','will','would','could','should','after','before','between','difference','stored','find','file','mean','explain','describe','using','used','together','compared','happen','happens','finish','finishes','for','his','her'}
     keywords = [re.sub(r'[^a-z0-9]', '', w) for w in question.lower().split() if len(w) > 3 and w not in stopwords]
-    keywords = [w for w in keywords if w]  # remove empty strings
-    main_topic = " ".join(keywords[:3]) if keywords else question
-    q_lower = question.lower()
-    
-    sub_qs = [{"query": "find documentation that explains: " + question, "type": "doc"},
-              {"query": "find the source code that implements: " + main_topic, "type": "code"}]
-    
-    if "difference between" in q_lower:
-        m = re.search(r'difference between (\w+) and (\w+)', q_lower)
-        if m:
-            sub_qs.append({"query": "find the {} type definition or data model".format(m.group(1)), "type": "code"})
-            sub_qs.append({"query": "find the {} type definition or data model".format(m.group(2)), "type": "code"})
-    if "component" in q_lower:
-        sub_qs.append({"query": "find React component files for " + main_topic, "type": "code"})
-    if "happen" in q_lower or "after" in q_lower:
-        sub_qs.append({"query": "find the handler or workflow code for " + main_topic, "type": "code"})
-    if "how" in q_lower and ("process" in q_lower or "implement" in q_lower):
-        sub_qs.append({"query": "find the runtime or executor code for " + main_topic, "type": "code"})
-        sub_qs.append({"query": "find runner, executor, or handler files for " + main_topic, "type": "code"})
-    
-    seen = set()
-    unique = []
-    for sq in sub_qs:
-        if sq["query"] not in seen:
-            seen.add(sq["query"])
-            unique.append(sq)
-    return unique, keywords
+    return [w for w in keywords if w]
+
+def llm_decompose(question, seed=42):
+    """Use FastContext to generate sub-questions for exploring a codebase."""
+    prompt = (
+        "You are a code exploration planner. Given a question about a codebase, "
+        "break it down into exactly 2 sub-questions starting with 'Find' that describe "
+        "WHAT files or directories to search for. Never ask the model to explain concepts.\n\n"
+        "Always include a broad question that searches for "
+        "documentation, READMEs, or high-level overview files.\n\n"
+        "Examples:\n"
+        'Question: "how does user authentication work?"\n'
+        "Sub-questions:\n"
+        "1. Find documentation or README files about authentication\n"
+        "2. Find files that implement authentication middleware or session management\n\n"
+        'Question: "how many API routes exist?"\n'
+        "Sub-questions:\n"
+        "1. Find README or docs describing the API structure\n"
+        "2. Find files that define API route handlers\n\n"
+        f'Now, for this question:\n"{question}"\n'
+        "Sub-questions:\n"
+    )
+    messages = [
+        {"role": "system", "content": "You are a code exploration planner. Output only numbered sub-questions starting with 'Find'. Never ask for explanations."},
+        {"role": "user", "content": prompt},
+    ]
+    resp = call_fc(messages, [], seed=seed)
+    content = resp["content"]
+    sub_qs = []
+    for line in content.strip().split("\n"):
+        line = line.strip().rstrip(".")
+        # Remove leading number/dash/prefix, then take meaningful content
+        line = re.sub(r'^(?:\d+\s*[\.\):]\s*|[-*]\s+)', '', line)
+        if line and len(line) > 3 and line.lower() not in ("none",):
+            if not line.lower().startswith("find") and not line.lower().startswith("search"):
+                line = "find " + line
+            sub_qs.append(line)
+    if not sub_qs:
+        sub_qs = [question]
+    return sub_qs[:2]
+
+def _concept_variants(concept):
+    """Generate search variants for a concept to catch word forms."""
+    yield concept
+    if concept.endswith("ies") and len(concept) > 4:
+        yield concept[:-3] + "y"
+    if concept.endswith("s") and not concept.endswith("ss") and len(concept) > 4:
+        yield concept[:-1]
+    if concept.endswith("ing") and len(concept) > 5:
+        yield concept[:-3]
+        if concept.endswith("ing"):
+            yield concept[:-3] + "e"
+
+def extract_concepts(question, sub_qs):
+    """Extract meaningful search concepts from question and sub-questions."""
+    stopwords = {'the','what','where','when','how','does','this','that','with','from','have','been','will','would','could','should','after','before','between','difference','stored','find','file','mean','explain','describe','using','used','together','compared','happen','happens','finish','finishes','for','his','her','loaded','called','based','built','stored','found','shown','given','taken','setup','done'}
+    concepts = set()
+    for text in [question] + list(sub_qs):
+        words = re.sub(r'[^a-z0-9 ]', '', text.lower()).split()
+        words = [w for w in words if len(w) > 2 and w not in stopwords]
+        for w in words:
+            concepts.add(w)
+        for i in range(len(words) - 1):
+            if words[i] not in stopwords and words[i+1] not in stopwords:
+                concepts.add(words[i] + " " + words[i+1])
+        for i in range(len(words) - 2):
+            if all(w not in stopwords for w in words[i:i+3]):
+                concepts.add(" ".join(words[i:i+3]))
+    concepts.discard("")
+    return list(concepts)[:20]
 
 # ─── MCP Tools ─────────────────────────────────────────────────────────────────
 
 @mcp.tool()
-def search_context(question: str, work_dir: Optional[str] = None, seed: int = 42, max_turns: int = 6, enable_gap_fill: bool = True) -> str:
+def search_context(question: str, work_dir: Optional[str] = None, seed: int = 42, max_turns: int = 3, enable_gap_fill: bool = True) -> str:
     """Search a codebase for context relevant to a question.
     Use this to find code snippets, documentation, or implementation details
     in a project. Always pass the project's root directory as work_dir.
@@ -294,7 +376,7 @@ def search_context(question: str, work_dir: Optional[str] = None, seed: int = 42
         question: The question about the codebase (can be conceptual or code-specific)
         work_dir: REQUIRED — the absolute path to the project root directory to search
         seed: Random seed for reproducibility (default: 42)
-        max_turns: Max exploration turns per sub-question (default: 6)
+        max_turns: Max exploration turns per sub-question (default: 3)
         enable_gap_fill: Whether to use fuzzy gap-fill for missing concepts (default: true)
     
     Returns:
@@ -305,24 +387,31 @@ def search_context(question: str, work_dir: Optional[str] = None, seed: int = 42
     if not os.path.isdir(wd):
         return json.dumps({"error": "Work directory does not exist: " + wd})
     
-    # Step 1: Decompose
-    sub_qs, keywords = decompose(question)
+    # Step 1: Decompose via LLM
+    keywords = extract_keywords(question)
+    sub_qs = llm_decompose(question, seed=seed)
+    concepts = extract_concepts(question, sub_qs)
     
     # Step 2: Explore with FastContext
     all_read_files = {}
     for sq in sub_qs:
-        files = fc_explore(sq["query"], wd, seed=seed, max_turns=max_turns)
+        files = fc_explore(sq, wd, seed=seed, max_turns=max_turns)
         all_read_files.update(files)
     
-    # Step 3: Extract snippets using fuzzy matching
-    all_content, snippet_chars = extract_snippets(all_read_files, keywords)
+    # Step 3: Extract snippets using fuzzy matching (use sub-question phrases)
+    all_content, snippet_chars = extract_snippets(all_read_files, concepts)
     
     # Step 4: Gap-fill (optional)
     gap_content = ""
     gap_chars = 0
     if enable_gap_fill:
-        # Check which keywords are missing
-        missing = [kw for kw in keywords if kw.lower() not in all_content.lower()]
+        filled = set()
+        for kw in keywords:
+            if kw.lower() not in all_content.lower():
+                filled.add(kw)
+        missing = [c for c in concepts if c.lower() not in all_content.lower() and c.count(" ") == 0]
+        missing = [c for c in missing if len(c) >= 5]
+        missing = [c for c in missing if c not in {"process", "data", "file", "code", "system", "user", "manage", "create", "update", "delete", "get", "set", "find", "run", "work", "base", "info", "text", "type", "list", "show", "test", "need", "automatically", "actually", "loaded", "called", "based"}]
         if missing:
             gap_content, gap_chars = gap_fill(missing, wd, all_read_files)
             all_content += gap_content
@@ -331,7 +420,7 @@ def search_context(question: str, work_dir: Optional[str] = None, seed: int = 42
     
     return json.dumps({
         "question": question,
-        "sub_questions": [sq["query"] for sq in sub_qs],
+        "sub_questions": sub_qs,
         "files_read": len(all_read_files),
         "snippets": all_content,
         "context_chars": total_chars,
