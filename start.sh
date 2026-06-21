@@ -60,6 +60,7 @@ $LLAMA_SERVER \
     $GPU_ARGS \
     --host 127.0.0.1 \
     --port "$PORT" \
+    --jinja \
     &
 LLAMA_PID=$!
 

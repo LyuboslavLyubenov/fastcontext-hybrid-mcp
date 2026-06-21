@@ -73,13 +73,18 @@ def fuzzy_snippet(filepath, concepts, context=2):
 def resolve_path(p, work_dir):
     if not p: return p
     if os.path.exists(p): return p
+    
+    # Model training uses /basename as alias for work_dir
     ws_name = os.path.basename(work_dir)
-    ws_parent = os.path.dirname(work_dir)
-    if p.startswith("/" + ws_name + "/") or p == "/" + ws_name:
-        candidate = ws_parent + p
-        if os.path.exists(candidate): return candidate
+    if p.startswith("/" + ws_name):
+        # Replace leading /ws_name with the real work_dir
+        p = work_dir + p[len(ws_name) + 1:]
+        if os.path.exists(p): return p
+    
+    # Try prepending work_dir for relative paths
     candidate = os.path.join(work_dir, p.lstrip("/"))
     if os.path.exists(candidate): return candidate
+    
     return p
 
 # ─── Tool Execution ────────────────────────────────────────────────────────────
@@ -89,6 +94,9 @@ def execute_tool(name, args_str, work_dir):
     try:
         if name == "Read":
             p = resolve_path(args["path"], work_dir)
+            if os.path.isdir(p):
+                files = [f for f in os.listdir(p) if os.path.isfile(os.path.join(p, f))][:10]
+                return "Error: path is a directory. Use Read with a file path. Files here: " + ", ".join(files)
             if not os.path.isfile(p): return "File " + p + " does not exist."
             with open(p) as f: lines = f.readlines()
             off = max(args.get("offset", 1) or 1, 1)
@@ -102,11 +110,7 @@ def execute_tool(name, args_str, work_dir):
         elif name == "Grep":
             cmd = ["rg", args["pattern"], resolve_path(args.get("path", work_dir), work_dir)]
             if args.get("glob"): cmd += ["--glob", args["glob"]]
-            mode = args.get("output_mode", "files_with_matches")
-            if mode == "content": cmd += ["-n", "-C", str(args.get("-C", 3))]
-            elif mode == "count": cmd += ["--count"]
-            else: cmd += ["--files-with-matches"]
-            cmd += ["--heading", "--color", "never"]
+            cmd += ["--files-with-matches", "--heading", "--color", "never"]
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=10, cwd=work_dir)
             return r.stdout.strip()[:2000] if r.returncode == 0 else r.stderr.strip()[:500]
         return "Unknown tool"
@@ -138,7 +142,7 @@ def call_fc(messages, tools, seed=42):
 FC_TOOLS = [
     {"type":"function","function":{"name":"Read","description":"Reads a file. Lines numbered starting at 1.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"Absolute path"},"offset":{"type":"integer"},"limit":{"type":"integer"}},"required":["path"]}}},
     {"type":"function","function":{"name":"Glob","description":"File pattern matching.","parameters":{"type":"object","properties":{"directory":{"type":"string"},"pattern":{"type":"string"}},"required":["pattern"]}}},
-    {"type":"function","function":{"name":"Grep","description":"Regex search on file contents.","parameters":{"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string"},"glob":{"type":"string"},"output_mode":{"type":"string","enum":["content","files_with_matches","count"]},"-C":{"type":"number"},"-i":{"type":"boolean"}},"required":["pattern"]}}},
+    {"type":"function","function":{"name":"Grep","description":"Find files matching a regex pattern (use Read to see file contents).","parameters":{"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string"},"glob":{"type":"string"},"output_mode":{"type":"string","enum":["files_with_matches"]},"-C":{"type":"number"},"-i":{"type":"boolean"}},"required":["pattern"]}}},
 ]
 
 SYSTEM_PROMPT = """You are a codebase exploration specialist focused exclusively on searching and analyzing existing code.
@@ -228,20 +232,21 @@ def gap_fill(missing_concepts, work_dir, existing_files):
     """Search for missing concepts using fuzzy matching."""
     gap_content = ""
     gap_chars = 0
-    for concept in missing_concepts:
-        for subdir in ["/docs", "/prototypes", "/web", "/ingestion", "/taxonomy"]:
-            target = work_dir + subdir
-            if not os.path.isdir(target): continue
-            r = subprocess.run(["rg", concept, target, "--files-with-matches", "--heading", "--color", "never"],
+    for concept in missing_concepts[:5]:
+        try:
+            r = subprocess.run(["rg", "--files-with-matches", concept, work_dir, "--heading", "--color", "never"],
                              capture_output=True, text=True, timeout=10)
             if r.returncode == 0:
                 for f in r.stdout.strip().split("\n"):
+                    f = f.strip()
                     if f and os.path.isfile(f) and f not in existing_files:
                         snippet = fuzzy_snippet(f, [concept], context=2)
                         if snippet:
                             gap_chars += len(snippet)
                             gap_content += snippet + "\n"
                             break
+        except:
+            pass
     return gap_content, gap_chars
 
 def decompose(question):
