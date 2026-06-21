@@ -286,11 +286,13 @@ def decompose(question):
 @mcp.tool()
 def search_context(question: str, work_dir: Optional[str] = None, seed: int = 42, max_turns: int = 6, enable_gap_fill: bool = True) -> str:
     """Search a codebase for context relevant to a question.
+    Use this to find code snippets, documentation, or implementation details
+    in a project. Always pass the project's root directory as work_dir.
     Uses FastContext 4B model for smart exploration + fuzzy gap-fill.
     
     Args:
         question: The question about the codebase (can be conceptual or code-specific)
-        work_dir: Path to the codebase (defaults to FASTCONTEXT_WORK_DIR env var)
+        work_dir: REQUIRED — the absolute path to the project root directory to search
         seed: Random seed for reproducibility (default: 42)
         max_turns: Max exploration turns per sub-question (default: 6)
         enable_gap_fill: Whether to use fuzzy gap-fill for missing concepts (default: true)
