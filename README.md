@@ -147,9 +147,40 @@ WORK_DIR=/path/to/your/project docker compose up fastcontext-vulkan
 
 ## Using with MCP Clients
 
-### Stdio (native macOS/Linux)
+### Always-on SSE server (recommended)
 
-Add to `~/.config/opencode/opencode.json` or `~/.hermes/config.yaml`:
+Start a single persistent server that accepts requests for any project:
+
+```bash
+./start.sh /path/to/default/project
+```
+
+The server listens on `http://127.0.0.1:8090/sse` with SSE transport.
+Configure your MCP client:
+
+```json
+{
+  "mcp": {
+    "fastcontext": {
+      "type": "remote",
+      "url": "http://127.0.0.1:8090/sse",
+      "enabled": true
+    }
+  }
+}
+```
+
+The `search_context` tool accepts a `work_dir` parameter per request,
+so the same server can search any project without restarting:
+
+```
+search_context(question="...", work_dir="/path/to/project-a")
+search_context(question="...", work_dir="/path/to/project-b")
+```
+
+If `work_dir` is omitted, the default from startup is used.
+
+### Stdio (one project per process)
 
 ```yaml
 mcp_servers:
@@ -164,16 +195,25 @@ mcp_servers:
 
 Make sure `llama-server` is running first (via `./start.sh` or manually).
 
-### SSE (Docker)
+### Docker
 
-When running in Docker, the MCP server listens on port 8090 with SSE transport.
+```bash
+WORK_DIR=/path/to/your/project docker compose up fastcontext-cpu
+```
+
+The MCP server listens on port 8090 with SSE transport.
 Configure your MCP client to connect via SSE:
 
-```yaml
-mcp_servers:
-  fastcontext:
-    transport: "sse"
-    url: "http://localhost:8090/mcp"
+```json
+{
+  "mcp": {
+    "fastcontext": {
+      "type": "remote",
+      "url": "http://localhost:8090/sse",
+      "enabled": true
+    }
+  }
+}
 ```
 
 ---
